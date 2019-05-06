@@ -1,0 +1,45 @@
+[package]
+name = "servo-rust"
+version = "0.1.0"
+authors = ["elsuizo <mnoblia@disroot.org>"]
+edition = "2018"
+
+[workspace]
+
+[dependencies]
+stm32f1xx-hal = { version = "0.2", features = ["rt", "stm32f103" ] }
+# stm32f103xx-hal = { git = "https://github.com/japaric/stm32f103xx-hal" }
+# motor-driver = { git = "https://github.com/japaric/motor-driver" }
+nb = "*"
+# cortex-m-rtfm = "*"
+cortex-m-rtfm = {version = "0.4.2", features = ["timer-queue"]}
+# cortex-m = "*"
+cortex-m = "*"
+cortex-m-rt = "*"
+cortex-m-semihosting = "*"
+stm32f103xx = "*"
+panic-semihosting = "*"
+panic-halt = "*"
+embedded-hal = "*"
+heapless = "0.4.2"
+# panic-itm = "0.2.0"
+
+# [dependencies.cortex-m-rt]
+# features = ["abort-on-panic"]
+# version = "0.6.7"
+
+[features]
+default = ["stm32f103"]
+doc = []
+rt = ["stm32f103xx/rt"]
+stm32f103 = []
+timer-queue = []
+
+[profile.dev]
+incremental = false
+codegen-units = 1
+
+[profile.release]
+codegen-units = 1
+debug = true
+lto = true

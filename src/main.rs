@@ -191,5 +191,3 @@ const APP: () = {
 fn calculate_rpm(frequency: u32) -> f32 {
     frequency as f32 * 60.0
 }
-
-

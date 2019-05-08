@@ -30,6 +30,7 @@ type LED = gpio::gpioc::PC13<gpio::Output<gpio::PushPull>>;
 type BUZZER = gpio::gpioc::PC15<gpio::Output<gpio::PushPull>>;
 type PINS = (gpio::gpiob::PB6<gpio::Input<gpio::Floating>>, gpio::gpiob::PB7<gpio::Input<gpio::Floating>>);
 
+type PIN = gpio::gpiob::PB0<gpio::Input<gpio::PullUp>>;
 //-------------------------------------------------------------------------
 //                        app
 //-------------------------------------------------------------------------
@@ -42,6 +43,7 @@ const APP: () = {
     // recursos que vamos a utilizar
     // static mut BUZZER: BUZZER = ();
     static mut LED: LED = ();
+    static mut PIN: PIN = ();
     static mut COUNTER: u32 = ();
     static mut POSITION: u16 = ();
     static mut FLAG: bool = ();
@@ -65,7 +67,7 @@ const APP: () = {
         let mut afio = device.AFIO.constrain(&mut rcc.apb2);
         let mut gpiob = device.GPIOB.split(&mut rcc.apb2);
         // configure PB0 with the index pulse interrupt
-        gpiob.pb0.into_pull_up_input(&mut gpiob.crl);
+        let mut pin = gpiob.pb0.into_pull_up_input(&mut gpiob.crl);
 
         // configure interrupts, PB0 to EXTI0
         // enable interrupt mask for line 0
@@ -131,16 +133,20 @@ const APP: () = {
             EXTI: exti,
             LOGGER: logger,
             ENCODER: qei,
+            PIN: pin,
         }
 
     }
 
-    #[task(schedule = [periodic_logger], resources = [LOGGER, ENCODER, POSITION, FLAG])]
+    #[task(schedule = [periodic_logger], resources = [LOGGER, ENCODER, POSITION, FLAG, LED, PIN])]
     fn periodic_logger() {
 
         *resources.POSITION = resources.ENCODER.count();
         if *resources.FLAG {
             *resources.POSITION = 0;
+        }
+        if resources.PIN.is_high() {
+            resources.LED.toggle();
         }
         // toggle for debug
         // resources.LED.toggle();
@@ -170,7 +176,7 @@ const APP: () = {
     fn EXTI0() {
         *resources.COUNTER += 1;
         // the index pulse has trigger set the position to zero
-        resources.LED.toggle();
+        // resources.LED.toggle();
         if *resources.FLAG {
             *resources.FLAG = false;
         } else {

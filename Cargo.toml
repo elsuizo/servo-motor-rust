@@ -1,5 +1,5 @@
 [package]
-name = "servo-rust"
+name = "servo-motor-rust"
 version = "0.1.0"
 authors = ["elsuizo <mnoblia@disroot.org>"]
 edition = "2018"

@@ -34,28 +34,28 @@ type PINS = (gpio::gpiob::PB6<gpio::Input<gpio::Floating>>, gpio::gpiob::PB7<gpi
 //                        app
 //-------------------------------------------------------------------------
 
-const PERIOD_LOGGER: u32 = 8_000_000;
-const PERIOD_MEASURE: u32 = 800;
+const PERIOD_LOGGER: u32 = 32_000_000;
+const PERIOD_MEASURE: u32 = 8_000_000;
 
 #[app(device = stm32f1xx_hal::stm32)]
 const APP: () = {
     // recursos que vamos a utilizar
     // static mut BUZZER: BUZZER = ();
     static mut LED: LED = ();
-    static mut COUNTER: u32 = ();
     static mut POSITION: u16 = ();
     static mut FLAG: bool = ();
     static mut EXTI: stm32f1xx_hal::device::EXTI = ();
     static mut LOGGER: logger::Logger = ();
     static mut ENCODER: stm32f1xx_hal::qei::Qei<TIM4, PINS> = ();
+    static mut CYCLES: u32 = ();
 
     #[init(schedule = [periodic_logger])]
     fn init() -> init::LateResources {
-
         //-------------------------------------------------------------------------
         //                   interrupt initialization
         //-------------------------------------------------------------------------
-        let device: stm32f1xx_hal::stm32::Peripherals = device;
+        // NOTE(elsuizo:2019-05-09): este device no hace falta ya que inicializa en app
+        // let device: stm32f1xx_hal::stm32::Peripherals = device;
         // let mut _flash = device.FLASH.constrain();
         // // Enable the alternate function I/O clock (for external interrupts)
         device.RCC.apb2enr.write(|w| w.afioen().enabled());
@@ -91,7 +91,6 @@ const APP: () = {
         // let mut buzzer_output = gpioc.pc15.into_push_pull_output(&mut gpioc.crh);
         led.set_low();
         // buzzer_output.set_low();
-        let counter: u32 = 0;
         let position: u16 = 0;
         let flag: bool = false;
         let c1 = gpiob.pb6;
@@ -117,42 +116,46 @@ const APP: () = {
         // NOTE(elsuizo:2019-03-14): necesitamos pasarle tx a write_message()
         // let tx = serial.split().0;
         let logger = logger::Logger::new(tx);
+        let cycles: u32 = 0;
         //-------------------------------------------------------------------------
         //                        resources
         //-------------------------------------------------------------------------
         schedule.periodic_logger(Instant::now() + PERIOD_LOGGER.cycles()).unwrap();
-
         init::LateResources {
             LED: led,
             // BUZZER: buzzer_output,
-            COUNTER: counter,
             POSITION: position,
             FLAG: flag,
             EXTI: exti,
             LOGGER: logger,
             ENCODER: qei,
+            CYCLES: cycles,
         }
 
     }
 
-    #[task(schedule = [periodic_logger], resources = [LOGGER, ENCODER, POSITION, FLAG])]
+    #[task(schedule = [periodic_logger], resources = [LOGGER, ENCODER, POSITION, CYCLES])]
     fn periodic_logger() {
 
-        *resources.POSITION = resources.ENCODER.count();
-        if *resources.FLAG {
-            *resources.POSITION = 0;
-        }
         // toggle for debug
         // resources.LED.toggle();
         // let f = calculate_rpm(*resources.COUNTER);
         let mut out: String<U256> = String::new();
-        write!(&mut out, "Position: {}", *resources.POSITION).unwrap();
+        write!(&mut out, "cycles: {}", *resources.CYCLES).unwrap();
         resources.LOGGER.log(out.as_str()).unwrap();
-        // *resources.COUNTER = 0;
+        *resources.CYCLES = 0;
 
         schedule.periodic_logger(scheduled + PERIOD_LOGGER.cycles()).unwrap();
     }
 
+    #[task(spawn=[periodic_logger], schedule = [tachometer], resources = [FLAG, CYCLES])]
+    fn tachometer() {
+        // *resources.CYCLES = 0;
+        if *resources.FLAG {
+            *resources.CYCLES += 1;
+        }
+        schedule.tachometer(scheduled + PERIOD_MEASURE.cycles()).unwrap();
+    }
 
     // #[idle]
     // fn idle() -> ! {
@@ -166,9 +169,8 @@ const APP: () = {
     //     }
     // }
 
-    #[interrupt(resources = [COUNTER, EXTI, POSITION, FLAG, LED])]
+    #[interrupt(resources = [EXTI, FLAG, LED])]
     fn EXTI0() {
-        *resources.COUNTER += 1;
         // the index pulse has trigger set the position to zero
         resources.LED.toggle();
         if *resources.FLAG {

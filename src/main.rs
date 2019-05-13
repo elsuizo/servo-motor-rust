@@ -14,7 +14,7 @@ mod logger;
 extern crate panic_semihosting;
 // use stm32f1xx_hal::{delay, gpio, i2c, spi, stm32, timer};
 // use cortex_m_semihosting::hprintln;
-use rtfm::{app, Instant};
+use rtfm::{app, Instant, Duration};
 use stm32f1xx_hal::prelude::*;
 use stm32f1xx_hal::{gpio};
 use stm32f1xx_hal::stm32::Interrupt;
@@ -34,7 +34,7 @@ type PINS = (gpio::gpiob::PB6<gpio::Input<gpio::Floating>>, gpio::gpiob::PB7<gpi
 //                        app
 //-------------------------------------------------------------------------
 
-const PERIOD_LOGGER: u32 = 32_000_000;
+const PERIOD_LOGGER: u32 = 8_000_000;
 const PERIOD_MEASURE: u32 = 8_000_000;
 
 #[app(device = stm32f1xx_hal::stm32)]
@@ -43,11 +43,14 @@ const APP: () = {
     // static mut BUZZER: BUZZER = ();
     static mut LED: LED = ();
     static mut POSITION: u16 = ();
-    static mut FLAG: bool = ();
+    static mut FREQ: u32 = ();
     static mut EXTI: stm32f1xx_hal::device::EXTI = ();
     static mut LOGGER: logger::Logger = ();
     static mut ENCODER: stm32f1xx_hal::qei::Qei<TIM4, PINS> = ();
-    static mut CYCLES: u32 = ();
+    static mut CALCULATED: bool = ();
+    static mut TIME_BEFORE: Instant = ();
+    static mut TIME_NOW: Instant = ();
+    // static mut SLEEP: u32        = ();
 
     #[init(schedule = [periodic_logger])]
     fn init() -> init::LateResources {
@@ -55,7 +58,7 @@ const APP: () = {
         //                   interrupt initialization
         //-------------------------------------------------------------------------
         // NOTE(elsuizo:2019-05-09): este device no hace falta ya que inicializa en app
-        // let device: stm32f1xx_hal::stm32::Peripherals = device;
+        let device: stm32f1xx_hal::stm32::Peripherals = device;
         // let mut _flash = device.FLASH.constrain();
         // // Enable the alternate function I/O clock (for external interrupts)
         device.RCC.apb2enr.write(|w| w.afioen().enabled());
@@ -92,11 +95,13 @@ const APP: () = {
         led.set_low();
         // buzzer_output.set_low();
         let position: u16 = 0;
-        let flag: bool = false;
         let c1 = gpiob.pb6;
         let c2 = gpiob.pb7;
         // Quadrature Encoder Interface
         let qei = Qei::tim4(device.TIM4, (c1, c2), &mut afio.mapr, &mut rcc.apb1);
+        // NOTE(elsuizo:2019-05-09): con este timer vamos a capturar el tiempo entre dos
+        // interrupciones para poder calcular las rpm
+        // let tim3 = Timer::tim3(device.TIM3, 1.hz(), clocks, &mut rcc.apb1);
 
         // USART1
         let mut flash = device.FLASH.constrain();
@@ -116,7 +121,10 @@ const APP: () = {
         // NOTE(elsuizo:2019-03-14): necesitamos pasarle tx a write_message()
         // let tx = serial.split().0;
         let logger = logger::Logger::new(tx);
-        let cycles: u32 = 0;
+        let calculated: bool = false;
+        let time_before: Instant = Instant::artificial(0);
+        let time_now: Instant = Instant::artificial(0);
+        let freq: u32 = 0;
         //-------------------------------------------------------------------------
         //                        resources
         //-------------------------------------------------------------------------
@@ -125,61 +133,69 @@ const APP: () = {
             LED: led,
             // BUZZER: buzzer_output,
             POSITION: position,
-            FLAG: flag,
+            FREQ: freq,
             EXTI: exti,
             LOGGER: logger,
             ENCODER: qei,
-            CYCLES: cycles,
+            CALCULATED: calculated,
+            TIME_NOW: time_now,
+            TIME_BEFORE: time_before,
         }
 
     }
 
-    #[task(schedule = [periodic_logger], resources = [LOGGER, ENCODER, POSITION, CYCLES])]
+    #[task(schedule = [periodic_logger], resources = [LOGGER, ENCODER, POSITION, FREQ])]
     fn periodic_logger() {
 
         // toggle for debug
         // resources.LED.toggle();
-        // let f = calculate_rpm(*resources.COUNTER);
+        let rpm = calculate_rpm(*resources.FREQ);
         let mut out: String<U256> = String::new();
-        write!(&mut out, "cycles: {}", *resources.CYCLES).unwrap();
+
+        write!(&mut out, "rpm: {:}", rpm).unwrap();
         resources.LOGGER.log(out.as_str()).unwrap();
-        *resources.CYCLES = 0;
 
         schedule.periodic_logger(scheduled + PERIOD_LOGGER.cycles()).unwrap();
     }
 
-    #[task(spawn=[periodic_logger], schedule = [tachometer], resources = [FLAG, CYCLES])]
-    fn tachometer() {
-        // *resources.CYCLES = 0;
-        if *resources.FLAG {
-            *resources.CYCLES += 1;
-        }
-        schedule.tachometer(scheduled + PERIOD_MEASURE.cycles()).unwrap();
-    }
+    // #[task(spawn=[periodic_logger], schedule = [tachometer], resources = [FLAG, CYCLES])]
+    // fn tachometer() {
+    //     // *resources.CYCLES = 0;
+    //     if *resources.FLAG {
+    //         *resources.CYCLES += 1;
+    //     }
+    //     schedule.tachometer(scheduled + PERIOD_MEASURE.cycles()).unwrap();
+    // }
 
-    // #[idle]
+    // #[idle(resources = [SLEEP])]
     // fn idle() -> ! {
-    //     // NOTE(elsuizo:2019-04-23): este pend es importante porque sino se queda
-    //     // la interrupcion colgada
-    //     rtfm::pend(Interrupt::EXTI0);
-    //     // NOTE(elsuizo:2019-04-23): debemos poner el loop porque estamos diciendo que no devuelve
-    //     // nada
     //     loop {
-    //
+    //         // record when this loop starts
+    //         let before = Instant::now();
+    //         // wait for an interrupt (sleep)
+    //         wfi();
+    //         // after interrupt is fired add sleep time to the sleep tracker
+    //         resources
+    //             .SLEEP
+    //             .lock(|sleep| *sleep += before.elapsed().as_cycles());
     //     }
     // }
 
-    #[interrupt(resources = [EXTI, FLAG, LED])]
+    #[interrupt(resources = [EXTI, FREQ, LED, CALCULATED, TIME_BEFORE, TIME_NOW])]
     fn EXTI0() {
         // the index pulse has trigger set the position to zero
-        resources.LED.toggle();
-        if *resources.FLAG {
-            *resources.FLAG = false;
+        if *resources.CALCULATED == false {
+            *resources.TIME_BEFORE = Instant::now();
+            *resources.CALCULATED = true;
         } else {
-            *resources.FLAG = true;
+            *resources.TIME_NOW = Instant::now();
+            *resources.FREQ = (*resources.TIME_NOW - *resources.TIME_BEFORE).as_cycles();
+            *resources.TIME_BEFORE = *resources.TIME_NOW;
         }
+        resources.LED.toggle();
         // Set the pending register for EXTI11
-        resources.EXTI.pr.modify(|_, w| w.pr11().set_bit());
+        // resources.EXTI.pr.modify(|_, w| w.pr0().set_bit());
+        resources.EXTI.pr.write(|w| w.pr0().set_bit());
     }
 
     // NOTE(elsuizo:2019-04-24): necesita que le asignemos una interrupcion el sistema operativo
@@ -190,6 +206,6 @@ const APP: () = {
 
 // TODO(elsuizo:2019-04-25): lo que pude ver es que se pueden tener funciones separadas de lo que
 // es el OS
-fn calculate_rpm(frequency: u32) -> f32 {
-    frequency as f32 * 60.0
+fn calculate_rpm(cycles: u32) -> f32 {
+    60.0 / (cycles as f32 / 8_000_000 as f32)
 }

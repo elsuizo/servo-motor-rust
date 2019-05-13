@@ -23,7 +23,7 @@ panic-halt = "*"
 embedded-hal = "*"
 heapless = "0.4.2"
 # panic-itm = "0.2.0"
-
+# floating-duration = "0.1.2"
 # [dependencies.cortex-m-rt]
 # features = ["abort-on-panic"]
 # version = "0.6.7"
